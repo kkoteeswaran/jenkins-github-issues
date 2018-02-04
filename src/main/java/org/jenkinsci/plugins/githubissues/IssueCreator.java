@@ -62,6 +62,7 @@ public abstract class IssueCreator {
      * @param repo Repository to create the issue in
      * @param listener Build listener
      * @param workspace Build workspace
+     * @param testResult failing test
      * @return The issue that was created
      * @throws IOException when an unexpected problem occurs
      */
@@ -70,16 +71,19 @@ public abstract class IssueCreator {
         GitHubIssueNotifier jobConfig,
         GHRepository repo,
         TaskListener listener,
-        FilePath workspace
+        FilePath workspace,
+        TestResult testResult
     ) throws IOException {
         final GitHubIssueNotifier.DescriptorImpl globalConfig = jobConfig.getDescriptor();
-
-        String title = StringUtils.defaultIfBlank(jobConfig.getIssueTitle(), globalConfig.getIssueTitle());
-        String body = StringUtils.defaultIfBlank(jobConfig.getIssueBody(), globalConfig.getIssueBody());
+        String title = StringUtils.defaultIfBlank("Integration test failure: " + testResult.testSuiteName, globalConfig.getIssueTitle());
+        String body = StringUtils.defaultIfBlank("Error Message: " + testResult.errorMessage +
+        		"\nFailed Test Spec: " + testResult.fileName +
+        		"\n" + globalConfig.getIssueBody(), 
+        		globalConfig.getIssueBody());
         String label = StringUtils.defaultIfBlank(jobConfig.getIssueLabel(), globalConfig.getIssueLabel());
 
         GHIssueBuilder issueBuilder = repo.createIssue(formatText(title, run, listener, workspace))
-            .body(formatText(body, run, listener, workspace));
+            .body(formatText(body, run, listener, workspace)).assignee("kkoteeswaran");
 
         GHIssue issue = issueBuilder.create();
 

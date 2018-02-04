@@ -31,13 +31,15 @@ import org.kohsuke.stapler.StaplerRequest;
 import javax.annotation.Nonnull;
 import java.io.IOException;
 import java.io.PrintStream;
+import java.util.ArrayList;
 
 /**
  * Notifier that creates GitHub issues when builds fail, and automatically closes the issue once the build starts
  * passing again.
  */
 public class GitHubIssueNotifier extends Notifier implements SimpleBuildStep {
-    private String issueTitle;
+	private String resultsDir;
+	private String issueTitle;
     private String issueBody;
     private String issueLabel;
     private String issueRepo;
@@ -53,6 +55,7 @@ public class GitHubIssueNotifier extends Notifier implements SimpleBuildStep {
 
     /**
      * Initialises the {@link GitHubIssueNotifier} instance.
+     * @param resultsDir path to results directory
      * @param issueTitle the issue title
      * @param issueBody  the issue body
      * @param issueLabel the issue label
@@ -60,8 +63,9 @@ public class GitHubIssueNotifier extends Notifier implements SimpleBuildStep {
      * @param issueReopen reopen the issue
      * @param issueAppend append to existing issue
      */
-    public GitHubIssueNotifier(String issueTitle, String issueBody, String issueLabel, String issueRepo, boolean issueReopen, boolean issueAppend) {
-        this.issueTitle = issueTitle;
+    public GitHubIssueNotifier(String resultsDir, String issueTitle, String issueBody, String issueLabel, String issueRepo, boolean issueReopen, boolean issueAppend) {
+        this.resultsDir = resultsDir;
+    		this.issueTitle = issueTitle;
         this.issueBody = issueBody;
         this.issueLabel = issueLabel;
         this.issueRepo = issueRepo;
@@ -125,7 +129,8 @@ public class GitHubIssueNotifier extends Notifier implements SimpleBuildStep {
         @Nonnull TaskListener listener
     ) throws InterruptedException, IOException {
         PrintStream logger = listener.getLogger();
-
+        TestResultFileAnalyzer resultAnalyzer = new TestResultFileAnalyzer();
+        
         // If we got here, we need to grab the repo to create an issue (or close an existing issue)
         GHRepository repo;
         try {
@@ -137,60 +142,75 @@ public class GitHubIssueNotifier extends Notifier implements SimpleBuildStep {
 
         Result result = run.getResult();
 
-        final GitHubIssueAction previousGitHubIssueAction = getLatestIssueAction((Run) run.getPreviousBuild());
+//        final GitHubIssueAction previousGitHubIssueAction = getLatestIssueAction((Run) run.getPreviousBuild());
         GHIssue issue = null;
-        if (previousGitHubIssueAction != null) {
-            issue = repo.getIssue(previousGitHubIssueAction.getIssueNumber());
-        }
+//        if (previousGitHubIssueAction != null) {
+//            issue = repo.getIssue(previousGitHubIssueAction.getIssueNumber());
+//        }
 
         if (result == Result.FAILURE) {
-            if (issue != null) {
-                String issueBody = this.getIssueBody();
-                if (StringUtils.isBlank(issueBody)) {
-                    issueBody = this.getDescriptor().getIssueBody();
-                }
-                if (issue.getState() == GHIssueState.OPEN) {
-                    if (issueAppend) {
-                        //CONTINUE
-                        issue.comment(IssueCreator.formatText(issueBody, run, listener, workspace));
-                        logger.format(
-                                 "GitHub Issue Notifier: Build is still failing and issue #%s already exists. " +
-                                         "Not sending anything to GitHub issues%n",issue.getNumber());
-                    }
-                    run.addAction(new GitHubIssueAction(issue, GitHubIssueAction.TransitionAction.CONTINUE));
-                } else if (issue.getState() == GHIssueState.CLOSED) {
-                    if (issueReopen) {
-                        // REOPEN
-                        logger.format("GitHub Issue Notifier: Build has started failing again, reopend GitHub issue #%s%n", issue.getNumber());
-                        issue.reopen();
-                        issue.comment(IssueCreator.formatText(issueBody, run, listener, workspace));
-                        //set new labels
-                        if (issueLabel != null && !issueLabel.isEmpty()) {
-                            issue.setLabels(issueLabel.split(",| "));
-                        }
-                        run.addAction(new GitHubIssueAction(issue, GitHubIssueAction.TransitionAction.REOPEN));
-                    } else {
-                        //CREATE NEW
-                        issue = IssueCreator.createIssue(run, this, repo, listener, workspace);
-                        logger.format("GitHub Issue Notifier: Build has started failing, filed GitHub issue #%s%n", issue.getNumber());
-                        run.addAction(new GitHubIssueAction(issue, GitHubIssueAction.TransitionAction.OPEN));
-                    }
-                }
-            } else {
-                // CREATE NEW
-                issue = IssueCreator.createIssue(run, this, repo, listener, workspace);
-                logger.format("GitHub Issue Notifier: Build has started failing, filed GitHub issue #%s%n", issue.getNumber());
-                run.addAction(new GitHubIssueAction(issue, GitHubIssueAction.TransitionAction.OPEN));
+        	ArrayList<TestResult> failedTests = resultAnalyzer.getFailedTests(workspace, this.resultsDir, logger);
+            if(failedTests != null) {
+            		for(TestResult eachFailedTest : failedTests) {
+            			//CREATE NEW ISSUE
+                    issue = IssueCreator.createIssue(run, this, repo, listener, workspace, eachFailedTest);
+                    logger.format("[GitHub Issues Plugin]: Integration test failures! Filed GitHub issue #%s for failing test: %s.%n", issue.getNumber(), eachFailedTest.testSuiteName);
+                    run.addAction(new GitHubIssueAction(issue, GitHubIssueAction.TransitionAction.OPEN));
+            		}
             }
+            else {
+            		logger.format("[Github Issues Plugin]: Job failed but no failed tests reports found.");
+            }
+        }
+//            if (issue != null) {
+//                String issueBody = this.getIssueBody();
+//                if (StringUtils.isBlank(issueBody)) {
+//                    issueBody = this.getDescriptor().getIssueBody();
+//                }
+//                if (issue.getState() == GHIssueState.OPEN) {
+//                    if (issueAppend) {
+//                        //CONTINUE
+//                        issue.comment(IssueCreator.formatText(issueBody, run, listener, workspace));
+//                        logger.format(
+//                                 "GitHub Issue Notifier: Build is still failing and issue #%s already exists. " +
+//                                         "Not sending anything to GitHub issues%n",issue.getNumber());
+//                    }
+//                    run.addAction(new GitHubIssueAction(issue, GitHubIssueAction.TransitionAction.CONTINUE));
+//                } else if (issue.getState() == GHIssueState.CLOSED) {
+//                    if (issueReopen) {
+//                        // REOPEN
+//                        logger.format("GitHub Issue Notifier: Build has started failing again, reopened GitHub issue #%s%n", issue.getNumber());
+//                        issue.reopen();
+//                        issue.comment(IssueCreator.formatText(issueBody, run, listener, workspace));
+//                        //set new labels
+//                        if (issueLabel != null && !issueLabel.isEmpty()) {
+//                            issue.setLabels(issueLabel.split(",| "));
+//                        }
+//                        run.addAction(new GitHubIssueAction(issue, GitHubIssueAction.TransitionAction.REOPEN));
+//                    } else {
+//                        //CREATE NEW
+//                        issue = IssueCreator.createIssue(run, this, repo, listener, workspace);
+//                        logger.format("GitHub Issue Notifier: Build has started failing, filed GitHub issue #%s%n", issue.getNumber());
+//                        run.addAction(new GitHubIssueAction(issue, GitHubIssueAction.TransitionAction.OPEN));
+//                    }
+//                }
+//            } else {
+//                // CREATE NEW
+//                issue = IssueCreator.createIssue(run, this, repo, listener, workspace);
+//                logger.format("GitHub Issue Notifier: Build has started failing, filed GitHub issue #%s%n", issue.getNumber());
+//                run.addAction(new GitHubIssueAction(issue, GitHubIssueAction.TransitionAction.OPEN));
+//            }
         // In declarative pipelines, `result` can be null. The common pattern
         // is to explicitly set the failure state, so we treat unset as
         // implying success.
-        } else if ((result == Result.SUCCESS || result == null) && issue != null && issue.getState() == GHIssueState.OPEN) {
-            issue.comment("Build was fixed!");
-            issue.close();
-            logger.format("GitHub Issue Notifier: Build was fixed, closing GitHub issue #%s%n", issue.getNumber());
-            run.addAction(new GitHubIssueAction(issue, GitHubIssueAction.TransitionAction.CLOSE));
-        }
+//        } else if ((result == Result.SUCCESS || result == null) && issue != null && issue.getState() == GHIssueState.OPEN) {
+//            issue.comment("Build passed the next time!");
+//            // issue.close();
+//            // logger.format("GitHub Issue Notifier: Build was fixed, closing GitHub issue #%s%n", issue.getNumber());
+//            logger.format("GitHub Issue Notifier: Build was fixed, but GitHub issue #%s will not be closed.", issue.getNumber());
+//            run.addAction(new GitHubIssueAction(issue, GitHubIssueAction.TransitionAction.CLOSE));
+//        }
+
     }
 
     private GitHubIssueAction getLatestIssueAction(Run previousBuild) {
@@ -205,6 +225,20 @@ public class GitHubIssueNotifier extends Notifier implements SimpleBuildStep {
         return null;
     }
 
+    /**
+     * Returns the results directory.
+     *
+     * @return the results directory
+     */
+    public String getResultsDir() {
+        return resultsDir;
+    }
+
+    @DataBoundSetter
+    public void setResultsDir(String resultsDir) {
+        this.resultsDir = resultsDir;
+    }
+    
     /**
      * Returns the issue title.
      *
@@ -290,15 +324,17 @@ public class GitHubIssueNotifier extends Notifier implements SimpleBuildStep {
     @Extension
     public static final class DescriptorImpl extends BuildStepDescriptor<Publisher> {
         private String issueTitle = "$JOB_NAME $BUILD_DISPLAY_NAME failed";
-        private String issueBody =
-            "Build '$JOB_NAME' is failing!\n\n" +
-            "Last 50 lines of build output:\n\n" +
-            "```\n" +
-            "${BUILD_LOG, maxLines=50}\n" +
-            "```\n\n" +
-            "Changes since last successful build:\n" +
-            "${CHANGES_SINCE_LAST_SUCCESS, format=\"%c\", changesFormat=\"- [%a] %r - %m\\n\"}\n\n" +
-            "[View full output]($BUILD_URL)";
+//        private String issueBody =
+//            "Build '$JOB_NAME' is failing!\n\n" +
+//            "Last 50 lines of build output:\n\n" +
+//            "```\n" +
+//            "${BUILD_LOG, maxLines=50}\n" +
+//            "```\n\n" +
+//            "Changes since last successful build:\n" +
+//            "${CHANGES_SINCE_LAST_SUCCESS, format=\"%c\", changesFormat=\"- [%a] %r - %m\\n\"}\n\n" +
+//            "[View full output]($BUILD_URL) \n";
+        private String issueBody = 
+        		"\n\n [View full output]($BUILD_URL) \n";
         private String issueLabel;
 
         public DescriptorImpl() {

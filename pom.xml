@@ -85,7 +85,7 @@
         </file>
       </activation>
       <properties>
-        <github.test.project>https://github.com/YOUR_NAME/DUMMY_REPO/</github.test.project>
+        <github.test.project>https://github.com/kkoteeswaran/dummy/</github.test.project>
       </properties>
       <build>
         <plugins>
